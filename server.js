@@ -12,18 +12,16 @@ const reviewsRoutes = require('./src/routes/reviews.routes');
 
 const app = express();
 
-// Permitir conexiones desde el frontend en puertos locales.
+// Permitir conexiones desde el frontend local y el dominio publicado.
+const allowedOrigins = [
+    'http://localhost:5500',
+    'http://127.0.0.1:5500',
+    process.env.FRONTEND_URL
+].filter(Boolean);
+
 app.use(cors({
     origin: (origin, callback) => {
-        // Permitir herramientas como Postman que no envían origin.
-        if (!origin) {
-            return callback(null, true);
-        }
-
-        const allowedOrigin =
-            /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-
-        if (allowedOrigin) {
+        if (!origin || allowedOrigins.includes(origin)) {
             return callback(null, true);
         }
 
@@ -72,6 +70,14 @@ app.use((error, req, res, next) => {
 // Iniciar servidor
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-    console.log(`Servidor corriendo en http://localhost:${PORT}`);
+const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Servidor corriendo en http://127.0.0.1:${PORT}`);
+});
+
+server.on('error', (error) => {
+    console.error('ERROR AL INICIAR EL SERVIDOR:', error);
+});
+
+server.on('close', () => {
+    console.log('ATENCION: El servidor se ha cerrado.');
 });
