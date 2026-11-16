@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:3000';
+const API_URL = 'https://gamevault-8zox.onrender.com';
 
 const detailContainer = document.getElementById('gameDetail');
 

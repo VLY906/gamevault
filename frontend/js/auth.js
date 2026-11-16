@@ -1,5 +1,5 @@
 
-const API_URL = 'http://localhost:3000';
+const API_URL = 'https://gamevault-8zox.onrender.com';
 
 function showAuthMessage(element, message, type) {
     if (!element) return;
