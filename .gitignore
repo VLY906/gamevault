@@ -1,2 +1,4 @@
 node_modules/
 .env
+database/*_backup.sql
+database/gamevault_tidb.sql

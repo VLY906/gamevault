@@ -1,4 +1,5 @@
-﻿const pool = require('../config/db');
+﻿
+const pool = require('../config/db');
 
 async function findAll() {
     const [rows] = await pool.query(`
@@ -6,21 +7,33 @@ async function findAll() {
             purchase.id,
             purchase.user_id,
             user.name AS user_name,
-            CURRENT_TIMESTAMP AS purchased_at,
+            purchase.purchased_at,
             purchase.status,
-            COALESCE(purchase.price_paid, game.price, 0) AS total_amount,
-            1 AS item_count,
-            JSON_ARRAY(
-                JSON_OBJECT(
-                    'item_id', purchase.id,
-                    'game_id', game.id,
-                    'game_name', game.name,
-                    'price_paid', COALESCE(purchase.price_paid, game.price, 0)
+            COALESCE((
+                SELECT SUM(pi.price_paid)
+                FROM purchase_item pi
+                WHERE pi.purchase_id = purchase.id
+            ), 0) AS total_amount,
+            (
+                SELECT COUNT(*)
+                FROM purchase_item pi
+                WHERE pi.purchase_id = purchase.id
+            ) AS item_count,
+            COALESCE((
+                SELECT JSON_ARRAYAGG(
+                    JSON_OBJECT(
+                        'item_id', pi.id,
+                        'game_id', game.id,
+                        'game_name', game.name,
+                        'price_paid', pi.price_paid
+                    )
                 )
-            ) AS items
+                FROM purchase_item pi
+                INNER JOIN game ON game.id = pi.game_id
+                WHERE pi.purchase_id = purchase.id
+            ), JSON_ARRAY()) AS items
         FROM purchase
         INNER JOIN \`user\` ON user.id = purchase.user_id
-        LEFT JOIN game ON game.id = purchase.game_id
         ORDER BY purchase.id DESC
     `);
 
@@ -33,21 +46,33 @@ async function findById(id) {
             purchase.id,
             purchase.user_id,
             user.name AS user_name,
-            CURRENT_TIMESTAMP AS purchased_at,
+            purchase.purchased_at,
             purchase.status,
-            COALESCE(purchase.price_paid, game.price, 0) AS total_amount,
-            1 AS item_count,
-            JSON_ARRAY(
-                JSON_OBJECT(
-                    'item_id', purchase.id,
-                    'game_id', game.id,
-                    'game_name', game.name,
-                    'price_paid', COALESCE(purchase.price_paid, game.price, 0)
+            COALESCE((
+                SELECT SUM(pi.price_paid)
+                FROM purchase_item pi
+                WHERE pi.purchase_id = purchase.id
+            ), 0) AS total_amount,
+            (
+                SELECT COUNT(*)
+                FROM purchase_item pi
+                WHERE pi.purchase_id = purchase.id
+            ) AS item_count,
+            COALESCE((
+                SELECT JSON_ARRAYAGG(
+                    JSON_OBJECT(
+                        'item_id', pi.id,
+                        'game_id', game.id,
+                        'game_name', game.name,
+                        'price_paid', pi.price_paid
+                    )
                 )
-            ) AS items
+                FROM purchase_item pi
+                INNER JOIN game ON game.id = pi.game_id
+                WHERE pi.purchase_id = purchase.id
+            ), JSON_ARRAY()) AS items
         FROM purchase
         INNER JOIN \`user\` ON user.id = purchase.user_id
-        LEFT JOIN game ON game.id = purchase.game_id
         WHERE purchase.id = ?
     `, [id]);
 
@@ -60,21 +85,33 @@ async function findByUserId(userId) {
             purchase.id,
             purchase.user_id,
             user.name AS user_name,
-            CURRENT_TIMESTAMP AS purchased_at,
+            purchase.purchased_at,
             purchase.status,
-            COALESCE(purchase.price_paid, game.price, 0) AS total_amount,
-            1 AS item_count,
-            JSON_ARRAY(
-                JSON_OBJECT(
-                    'item_id', purchase.id,
-                    'game_id', game.id,
-                    'game_name', game.name,
-                    'price_paid', COALESCE(purchase.price_paid, game.price, 0)
+            COALESCE((
+                SELECT SUM(pi.price_paid)
+                FROM purchase_item pi
+                WHERE pi.purchase_id = purchase.id
+            ), 0) AS total_amount,
+            (
+                SELECT COUNT(*)
+                FROM purchase_item pi
+                WHERE pi.purchase_id = purchase.id
+            ) AS item_count,
+            COALESCE((
+                SELECT JSON_ARRAYAGG(
+                    JSON_OBJECT(
+                        'item_id', pi.id,
+                        'game_id', game.id,
+                        'game_name', game.name,
+                        'price_paid', pi.price_paid
+                    )
                 )
-            ) AS items
+                FROM purchase_item pi
+                INNER JOIN game ON game.id = pi.game_id
+                WHERE pi.purchase_id = purchase.id
+            ), JSON_ARRAY()) AS items
         FROM purchase
         INNER JOIN \`user\` ON user.id = purchase.user_id
-        LEFT JOIN game ON game.id = purchase.game_id
         WHERE purchase.user_id = ?
         ORDER BY purchase.id DESC
     `, [userId]);
@@ -83,38 +120,34 @@ async function findByUserId(userId) {
 }
 
 async function findSalesByDate(date) {
-    const [rows] = await pool.query(`
+    const query = `
         SELECT
             purchase.id AS purchase_id,
             purchase.user_id,
-            purchase.id AS item_id,
-            purchase.game_id,
+            pi.id AS item_id,
+            pi.game_id,
             game.name AS game_name,
-            CURRENT_DATE() AS sale_date,
-            COALESCE(purchase.price_paid, game.price, 0) AS amount,
+            purchase.purchased_at AS sale_date,
+            pi.price_paid AS amount,
             purchase.status
         FROM purchase
-        INNER JOIN game ON game.id = purchase.game_id
+        INNER JOIN purchase_item pi
+            ON pi.purchase_id = purchase.id
+        INNER JOIN game
+            ON game.id = pi.game_id
         WHERE purchase.status = 'completed'
+        ${date ? 'AND DATE(purchase.purchased_at) = ?' : ''}
         ORDER BY purchase.id DESC
-    `);
+    `;
+
+    const [rows] = await pool.query(query, date ? [date] : []);
 
     return rows;
 }
 
-async function create(purchaseData) {
-    const { user_id, items, status } = purchaseData;
-    const connection = await pool.getConnection();
-
-    try {
-        await connection.beginTransaction();
-
-        const firstItem = items && items[0] ? items[0] : null;
-        const gameId = firstItem ? (firstItem.game_id || firstItem.id) : null;
-
-        if (!gameId) {
-            throw new Error('No se especificó un videojuego válido para la compra.');
-        }
+async function insertPurchaseItems(connection, purchaseId, items) {
+    for (const item of items) {
+        const gameId = item.game_id || item.id || item.gameId;
 
         const [gameRows] = await connection.query(
             'SELECT price FROM game WHERE id = ?',
@@ -125,14 +158,33 @@ async function create(purchaseData) {
             throw new Error(`El videojuego ${gameId} no existe.`);
         }
 
-        const pricePaid = gameRows[0].price != null ? gameRows[0].price : 0.00;
+        await connection.query(`
+            INSERT INTO purchase_item
+                (purchase_id, game_id, price_paid)
+            VALUES (?, ?, ?)
+        `, [purchaseId, gameId, gameRows[0].price]);
+    }
+}
+
+async function create(purchaseData) {
+    const { user_id, items, status } = purchaseData;
+    const connection = await pool.getConnection();
+
+    try {
+        await connection.beginTransaction();
+
+        if (!items || items.length === 0) {
+            throw new Error('No se especificaron videojuegos para la compra.');
+        }
 
         const [purchaseResult] = await connection.query(`
-            INSERT INTO purchase (user_id, game_id, price_paid, status)
-            VALUES (?, ?, ?, ?)
-        `, [user_id, gameId, pricePaid, status || 'completed']);
+            INSERT INTO purchase (user_id, status)
+            VALUES (?, ?)
+        `, [user_id, status || 'completed']);
 
         const purchaseId = purchaseResult.insertId;
+
+        await insertPurchaseItems(connection, purchaseId, items);
 
         await connection.commit();
 
@@ -152,25 +204,11 @@ async function update(id, purchaseData) {
     try {
         await connection.beginTransaction();
 
-        const firstItem = items && items[0] ? items[0] : null;
-        const gameId = firstItem ? (firstItem.game_id || firstItem.id) : null;
-
-        let pricePaid = 0.00;
-        if (gameId) {
-            const [gameRows] = await connection.query(
-                'SELECT price FROM game WHERE id = ?',
-                [gameId]
-            );
-            if (gameRows.length > 0 && gameRows[0].price != null) {
-                pricePaid = gameRows[0].price;
-            }
-        }
-
         const [result] = await connection.query(`
             UPDATE purchase
-            SET user_id = ?, game_id = ?, price_paid = ?, status = ?
+            SET user_id = ?, status = ?
             WHERE id = ?
-        `, [user_id, gameId, pricePaid, status, id]);
+        `, [user_id, status, id]);
 
         if (result.affectedRows === 0) {
             const [existingRows] = await connection.query(
@@ -182,6 +220,15 @@ async function update(id, purchaseData) {
                 await connection.rollback();
                 return null;
             }
+        }
+
+        if (items !== undefined) {
+            await connection.query(
+                'DELETE FROM purchase_item WHERE purchase_id = ?',
+                [id]
+            );
+
+            await insertPurchaseItems(connection, id, items);
         }
 
         await connection.commit();
@@ -196,12 +243,30 @@ async function update(id, purchaseData) {
 }
 
 async function remove(id) {
-    const [result] = await pool.query(
-        'DELETE FROM purchase WHERE id = ?',
-        [id]
-    );
+    const connection = await pool.getConnection();
 
-    return result.affectedRows > 0;
+    try {
+        await connection.beginTransaction();
+
+        await connection.query(
+            'DELETE FROM purchase_item WHERE purchase_id = ?',
+            [id]
+        );
+
+        const [result] = await connection.query(
+            'DELETE FROM purchase WHERE id = ?',
+            [id]
+        );
+
+        await connection.commit();
+
+        return result.affectedRows > 0;
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
 }
 
 module.exports = {
